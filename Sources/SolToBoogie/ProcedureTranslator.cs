@@ -2674,13 +2674,21 @@ namespace SolToBoogie
                 currentStmtList.AddStatement(new BoogieSkipCmd(node.ToString()));
                 VeriSolAssert(false, "low-level call statements with non-empty signature not implemented..");
             }
-
-            // almost identical to send(amount)
-            BoogieIdentifierExpr tmpVarExpr = outParams[0]; //bool part of the tuple
-            if (tmpVarExpr == null)
+						
+			BoogieIdentifierExpr tmpVarExpr;
+            if (null == outParams)
             {
                 tmpVarExpr = MkNewLocalVariableWithType(BoogieType.Bool);
             }
+            else
+            {
+                // almost identical to send(amount)
+                tmpVarExpr = outParams[0]; //bool part of the tuple
+                if (null == tmpVarExpr)
+                {
+                    tmpVarExpr = MkNewLocalVariableWithType(BoogieType.Bool);
+                }
+            }		
 
             var amountExpr = node.MsgValue != null ? TranslateExpr(node.MsgValue) : new BoogieLiteralExpr(BigInteger.Zero);
             TranslateSendCallStmt(node, tmpVarExpr, amountExpr, true);
