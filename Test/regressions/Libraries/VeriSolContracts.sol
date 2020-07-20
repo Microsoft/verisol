@@ -100,5 +100,27 @@ library VeriSol {
     function Modifies(mapping (address => uint256) storage a, address[8] memory x) public pure;
     function Modifies(mapping (address => uint256) storage a, address[9] memory x) public pure;
     function Modifies(mapping (address => uint256) storage a, address[10] memory x) public pure;
+	
+	function Modifies(mapping (address => int256) storage a, address[1] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[2] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[3] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[4] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[5] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[6] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[7] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[8] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[9] memory x) public pure;
+    function Modifies(mapping (address => int256) storage a, address[10] memory x) public pure;
+	
+	function Modifies(mapping (address => bool) storage a, address[1] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[2] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[3] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[4] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[5] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[6] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[7] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[8] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[9] memory x) public pure;
+	function Modifies(mapping (address => bool) storage a, address[10] memory x) public pure;
 
 }

@@ -1,0 +1,6 @@
+{
+    "recursionBound": 8,
+    "k": 1,
+    "main": "CorralEntry_Test",
+    "expectedResult": "Program has no bugs"
+}
