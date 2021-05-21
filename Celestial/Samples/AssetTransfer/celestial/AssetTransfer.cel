@@ -1,0 +1,235 @@
+pragma solidity^0.6.8;
+
+import {Safe_Arith} from "./Safe_Arith.sol" ;
+
+contract MarketPlace_Cel
+{
+    address seller;
+    address buyer;
+
+    uint sellingPrice;
+    uint buyingPrice;
+
+    enum state
+    {
+        marketPlace_Active, marketPlace_OfferPlaced, marketPlace_NotionalAccept,
+          marketPlace_BuyerAccept, marketPlace_SellerAccept, marketPlace_Accept
+    }
+    state contractCurrentState;
+
+    event eMakeOffer (address, uint);
+    event eAcceptOffer (address, uint);
+
+    invariant distinctBuyerSeller
+    {
+        seller != buyer
+    }
+
+    spec modifyOfferPost (bool _increase, uint _change, uint old_sellingPrice, uint new_sellingPrice)
+    {
+        ite
+        (
+            _increase && old_sellingPrice + _change <= uint_max,
+            new_sellingPrice == old_sellingPrice + _change,
+            ite
+            (
+                old_sellingPrice >= _change,
+                new_sellingPrice == old_sellingPrice - _change,
+                new_sellingPrice == old_sellingPrice
+            )
+        )
+    }
+
+    spec acceptPost (address _from, address _seller, address _buyer, state old_state, state new_state)
+    {
+        ((old_state == state.marketPlace_NotionalAccept && _from == _buyer) ==> (new_state == state.marketPlace_BuyerAccept)) &&
+        ((old_state == state.marketPlace_NotionalAccept && _from == _seller) ==> (new_state == state.marketPlace_SellerAccept)) &&
+        ((old_state == state.marketPlace_BuyerAccept && _from == _seller) ==> (new_state == state.marketPlace_Accept)) &&
+        ((old_state == state.marketPlace_SellerAccept && _from == _buyer) ==> (new_state == state.marketPlace_Accept))
+    }
+
+    constructor (address _seller, address _buyer)
+        public
+        pre _seller != _buyer
+        post new(contractCurrentState) == state.marketPlace_Active
+    {
+        seller = _seller;
+        buyer = _buyer;
+        contractCurrentState = state.marketPlace_Active;
+        return;
+    }
+
+    function makeOffer (uint _sellingPrice)
+        public
+        post (new(sellingPrice) == _sellingPrice) && (new(contractCurrentState) == state.marketPlace_OfferPlaced)
+        tx_reverts (contractCurrentState != state.marketPlace_Active) || (sender != seller)
+        modifies [sellingPrice, contractCurrentState, log]
+    {
+        if (sender != seller)
+        {
+            revert ("");
+        }
+
+        if (contractCurrentState != state.marketPlace_Active)
+        {
+            revert ("<makeOffer> function invoked in invalid state");
+        }
+
+        sellingPrice = _sellingPrice;
+        contractCurrentState = state.marketPlace_OfferPlaced;
+        emit eMakeOffer (buyer, sellingPrice);
+        return;
+    }
+
+    function modifyOffer (bool _increase, uint _change)
+        public
+        post modifyOfferPost (_increase, _change, sellingPrice, new(sellingPrice))
+        tx_reverts (contractCurrentState != state.marketPlace_OfferPlaced) || (sender != seller)
+        modifies [sellingPrice]
+    {
+        if (sender != seller)
+        {
+            revert ("");
+        }
+
+        if (!(contractCurrentState == state.marketPlace_OfferPlaced && sender == seller))
+        {
+            revert ("<modifyOffer> function invoked in invalid state");
+        }
+
+        if (_increase)
+        {
+            sellingPrice = safe_add(sellingPrice, _change);  // ensures no overflow
+        }
+        else
+        {
+            sellingPrice = safe_sub(sellingPrice, _change); // ensures no underflow
+        }
+        return;
+    }
+
+    function rejectOffer ()
+        public 
+        post new(contractCurrentState) == state.marketPlace_Active
+        tx_reverts (contractCurrentState != state.marketPlace_OfferPlaced) || (sender != buyer)
+        modifies [contractCurrentState]
+    {
+        if (sender != buyer)
+        {
+            revert ("");
+        }
+
+        if (!(contractCurrentState == state.marketPlace_OfferPlaced && sender == buyer))
+        {
+            revert ("<rejectOffer> function invoked in invalid state");
+        }
+
+        contractCurrentState = state.marketPlace_Active;
+        return;
+    }
+
+    spec acceptOfferPost (
+        address _seller, state old_state, state new_state, uint _val, 
+        uint _sellingPrice, uint _buyingPrice, eventlog old_log, eventlog new_log)
+    {
+        (_val >= _sellingPrice) ==> ((_buyingPrice == _val) && (new_state == state.marketPlace_NotionalAccept) && new_log == (eAcceptOffer, _seller, _buyingPrice)::old_log)
+    }
+
+    function acceptOffer ()
+        public
+        post acceptOfferPost (seller, contractCurrentState, new(contractCurrentState), value, sellingPrice, new(buyingPrice), log, new(log))    
+        credit
+        tx_reverts (contractCurrentState != state.marketPlace_OfferPlaced) || (sender != buyer)
+        modifies [buyingPrice, contractCurrentState]
+    {
+        // Implementation bug: Currentstate was Active
+        if (contractCurrentState != state.marketPlace_OfferPlaced || sender != buyer)
+        {
+            revert ("<acceptOffer> function invoked in invalid state");
+        }
+
+        if (value >= sellingPrice)
+        {
+            buyingPrice = value;
+            emit eAcceptOffer (seller, buyingPrice);
+            contractCurrentState = state.marketPlace_NotionalAccept;
+        }
+        return;
+    }
+
+    spec acceptReverts (state old_contractCurrentState)
+    { 
+        old_contractCurrentState != state.marketPlace_NotionalAccept
+        && old_contractCurrentState != state.marketPlace_BuyerAccept
+        && old_contractCurrentState != state.marketPlace_SellerAccept
+    }
+
+    function accept ()
+        public
+        post acceptPost (sender, seller, buyer, contractCurrentState, new(contractCurrentState))
+        tx_reverts acceptReverts (contractCurrentState)
+        modifies [contractCurrentState]
+    {
+        if (!(contractCurrentState == state.marketPlace_NotionalAccept || contractCurrentState == state.marketPlace_BuyerAccept ||
+                contractCurrentState == state.marketPlace_SellerAccept))
+        {
+            revert ("<accept> function invoked in invalid state");
+        }
+
+        if (contractCurrentState == state.marketPlace_NotionalAccept && sender == buyer)
+        {
+            contractCurrentState = state.marketPlace_BuyerAccept;
+        }
+        else if (contractCurrentState == state.marketPlace_NotionalAccept && sender == seller)
+        {
+            contractCurrentState = state.marketPlace_SellerAccept;
+        }
+        else if (contractCurrentState == state.marketPlace_BuyerAccept && sender == seller)
+        {
+            contractCurrentState = state.marketPlace_Accept;
+        }
+        else if (contractCurrentState == state.marketPlace_SellerAccept && sender == buyer)
+        {
+            contractCurrentState = state.marketPlace_Accept;
+        }
+        return;
+    }
+
+    spec withdrawReverts (state old_contractCurrentState, address _sender, address old_seller, uint old_balance, uint old_buyingPrice)
+    { 
+        old_contractCurrentState != state.marketPlace_Accept || old_seller != _sender || old_balance < old_buyingPrice
+    }
+
+    spec withdrawPost (
+        uint old_balance, uint new_balance, uint old_buyingPrice,
+        address old_seller, eventlog old_log, eventlog new_log)
+    {
+        new_log == (old_seller, eTransfer, old_buyingPrice) :: old_log 
+        && (new_balance == old_balance - old_buyingPrice || new_balance == old_balance) 
+    }
+
+    function withdraw ()
+        public
+        post withdrawPost (balance, new(balance), buyingPrice, seller, log, new(log))
+        debit
+        tx_reverts withdrawReverts (contractCurrentState, sender, seller, balance, buyingPrice)
+    {
+        if (sender != seller)
+        {
+            revert ("");
+        }
+        
+        if (! (contractCurrentState == state.marketPlace_Accept && sender == seller))
+        {
+            revert ("<withdraw> function invoked in invalid state");
+        }
+        
+        if (balance < buyingPrice)
+        {
+            revert ("Insufficient balance");
+        }
+        
+        payable(seller).transfer(buyingPrice);
+        return;
+    }
+}

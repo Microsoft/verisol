@@ -1,0 +1,233 @@
+contract OtherContract {
+    int otherContractField;
+
+    // method otherContractMethod()
+    // tx_reverts false
+    // {
+    //     return;
+    // }
+
+    // method otherContractMethod2(int zx, bool yz)
+    // tx_reverts false
+    // returns (bool)
+    // {
+    //     return true;
+    // }
+
+    method setOtherContractField (int _otherContractField)
+    post new(otherContractField) == _otherContractField
+    {
+        otherContractField = _otherContractField;
+        return;
+    }
+}
+
+// contract AnotherContract {
+//     int anotherContractField;
+//     int a;
+
+//     enum testEnum { aaa, bbb, ccc }
+
+//     method anotherContractMethod()
+//     tx_reverts false
+//     {
+//         return;
+//     }
+// }
+
+contract Sample {
+    // OtherContract otherContractInstance;
+    // AnotherContract anotherContractInstance;
+    // map[int, OtherContract] mapOfContractInstances;
+    // int a;
+    // int b;
+    // bool c;
+    // map[address, int] i;
+    // map[int, map[int, int]] d;
+    // array[int] e;
+    // array[bool] f;
+    // array[uint] g;
+    // array[array[int]] h;
+    // map[int, map[int, map[int, int]]] pp;
+
+    // enum testEnum { aaa, bbb, ccc }
+    // testEnum state;
+
+    // struct someStruct
+    // {
+    //     int structVar;
+    //     bool structVar2;
+    // }
+
+    // someStruct someStructObject;
+    // array[someStruct] structArray;
+
+    // event someEvent(uint);
+
+    // // invariant inv {
+    // //     c || error
+    // // }
+
+    // // invariant inv2 {
+    // //     c || error
+    // // }
+
+    // invariant inv3 {
+    //     true
+    // }
+
+    // function takesInEnum (testEnum v)
+    // {
+    //     true
+    // }
+
+    // function foo (array[array[int]] q, map[int, uint] x, array[int] l, array[array[int]] lol,
+    //     map[int, map[int, int]] zozo
+    // ) {
+    //     // e.length()
+    //     // d[e[1]]
+    //     //(5 == g[5]) && false && true && (!c) && !c
+    //     // -m(a)
+    //     // f[1][1] // disallowed
+    //     // lol[3][x[l[2]]]
+    //     // l[4] + 5
+    //     // bar(4)
+    //     // undeclared_function()
+    //     // undeclared_variable
+    //     // ite (l[1] > 5, true, true) //&& x == x[5 => 6, 10 => 11]
+    //     // && 
+    //     zozo == zozo[5 => zozo[6][2 => 3]]
+    // }
+
+    // function baz(someStruct structArg, array[bool] ff)
+    // {
+    //     (forall (int pop, bool aaba) (aaba)) && 
+    //     (forall (uint zzz, bool zzzz, address abcd) (ff[zzz] ==> zzzz))
+    // }
+
+    // function bar(int ll) {
+    //     true
+    // }
+
+    // function usesImpl () {
+    //     true ==> true
+    // }
+
+    // function usesDefault (someStruct structObjArg) {
+    //     structObjArg == default(someStruct)
+    // }
+
+    // function takesErrorLog (eventlog elog, event eeps)
+    // {
+    //     true
+    // }
+
+    // constructor () 
+    // public
+    // post baz(new(someStructObject), new(f))
+    // tx_reverts false
+    // // post true
+    // {
+    //     int constructor_local;
+    //     state = testEnum.aaa;
+    //     constructor_local = someStructObject.structVar;
+    //     structArray.push(someStruct(a, true));
+    //     // mapOfContractInstances[2] = new OtherContract();
+
+    //     // mapOfContractInstances[2].otherContractMethod2(5, true);
+    //     return;
+    // }
+
+    // function createsInstancePost(map[int, OtherContract] mapOfContractInstances_old, map[int, OtherContract] mapOfContractInstances_new)
+    // {
+    //     mapOfContractInstances_new == mapOfContractInstances_old[1 => OtherContract()]
+    // }
+
+    // method createsInstance()
+    // post createsInstancePost(mapOfContractInstances, new(mapOfContractInstances))
+    // {
+    //     otherContractInstance = new OtherContract();
+    //     anotherContractInstance = new AnotherContract();
+    //     // otherContractInstance.otherContractMethod2(5, true);
+
+    //     mapOfContractInstances[1] = new OtherContract();
+    //     return;
+    // }
+
+    // method method_1 (int param1_1)
+    // credit
+    // tx_reverts false
+    // modifies []
+    // returns (bool)
+    // {
+    //     // h[1].push(1);
+    //     // a = b;
+    //     pp[5][4][3] = 2;
+    //     someStructObject.structVar = 5;
+    //     delete(e, 4);
+    //     return true;
+    // }
+
+    // method method_2 (uint param1, bool param2)
+    // pre true //true && bar(5) && bar(new(a))
+    // post bar(a) && bar(new(b)) && true && bar(e[1])
+    // tx_reverts bar(a)
+    // modifies []
+    // returns (int lolol)
+    // {
+    //     // int method_2_local;
+    //     // delete (d[1][1]);
+    //     lolol = 2;
+    //     if (b + 5 < int_max) {
+    //         a = b + 5;
+    //     }
+    //     // send(sender, someEvent, 5);
+    //     delete(i, null);
+    //     return 0;
+    // }
+
+    // method another_method ()
+    // pre true
+    // credit
+    // tx_reverts false
+    // {
+    //     int another_method_local;
+    //     if (true)
+    //     {
+    //         method_2(5, method_1(5));
+    //     }
+    //     revert ("Error");
+    //     return;
+    // }
+
+    // ****************** External Contract Tests ******************
+
+    inst_map <OtherContract> m;
+    OtherContract t;
+
+    function access_contract_instance_1 (inst_map<OtherContract> _m, address _a)
+    {
+        _a in _m && _m[_a].otherContractField == 5
+    }
+
+    // function access_contract_instance_2 (OtherContract _t)
+    // {
+    //     _t.otherContractField == 10
+    // }
+
+    method check_external_call (address _a)
+    post access_contract_instance_1 (m, _a)
+    {
+        address localAddressVariable;
+        if (m[_a] == null)
+        {
+            revert ("address passed is not of type OtherContract");
+        }
+        OtherContract localOtherContractInstance;
+        localOtherContractInstance = m[_a];
+        localAddressVariable = localOtherContractInstance.setOtherContractField(5);
+        return;
+    }
+
+    // ****************** End External Contract Tests ******************
+}

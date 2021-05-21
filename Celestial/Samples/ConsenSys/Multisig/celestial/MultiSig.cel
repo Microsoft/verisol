@@ -1,0 +1,438 @@
+pragma solidity^0.6.8;
+
+import {Safe_Arith} from "./Safe_Arith.sol" ;
+
+contract MultiSigWalletWithDailyLimit_Cel {
+
+    uint MAX_OWNER_COUNT = 50;
+
+    struct Transaction {
+        address destination;
+        uint tval;
+        bool executed;
+    }
+
+    event Confirmation(address, uint);
+    event Revocation(address, uint);
+    event Submission(uint);
+    event Execution(uint);
+    // event ExecutionFailure(uint transactionId);
+    event OwnerAddition(address);
+    event OwnerRemoval(address);
+    event RequirementChange(uint);
+
+    mapping (uint => Transaction) transactions;
+    mapping (uint => uint) confirmationCounts;
+    mapping (uint => mapping (address => bool)) confirmations;
+    mapping (address => bool) isOwner;
+    uint ownerCount;
+    uint required;
+    uint transactionCount;
+
+    bool walletActive;
+    bool tx_isConfirmed;
+    bool tx_isUnderLimit;
+
+    event DailyLimitChange(uint);
+
+    uint dailyLimit;
+    uint lastDay;
+    uint spentToday;
+
+    // when wallet is active, there are more owners than the required number for consensus
+    invariant walletActiveInv
+    {
+        walletActive ==> (required <= ownerCount)
+    }
+     
+    // if there is an address _a which is an owner, then ownerCount is nonzero
+    // ownerCount is always below permitted limit
+    invariant ownerCountInv
+    {     
+        ownerCount <= MAX_OWNER_COUNT 
+    }
+
+    invariant transactionCountInv
+    {
+        forall (uint i) ((i < transactionCount) ==> (i in transactions))
+    }
+     
+    // every txId in transactions has a corresponding entry in confirmationCounts
+    // for an txId i in transactions, if there is at least one owner who has confirmed it, then the confirmationCount for i is nonzero
+    invariant confirmationCountsInv
+    {
+        forall (uint i) ((i in transactions) ==> (i in confirmationCounts))
+    }
+
+    receive () credit {
+        return;
+    }
+
+    constructor (address initial_owner, uint _required, uint _dailyLimit)
+        pre (initial_owner != null && _required > 0)
+    {
+        isOwner[initial_owner] = true;
+        ownerCount = 1;
+        required = _required;
+        MAX_OWNER_COUNT = 50;
+        dailyLimit = _dailyLimit;
+        return;
+    }
+
+    spec addOwnerReverts (address _owner, mapping (address => bool) old_isOwner, uint old_ownerCt, uint old_MAX_OWNER_COUNT)
+    {
+        old_isOwner[_owner] || _owner == null || (old_ownerCt + 1) > uint_max || (old_ownerCt + 1) > old_MAX_OWNER_COUNT
+    }
+
+    spec addOwnerPost (
+        mapping (address => bool) old_isOwner, mapping (address => bool) new_isOwner,
+        uint old_ownerCount, uint new_ownerCount, uint _required, 
+        bool old_walletActive, bool new_walletActive, address _owner)
+    {
+        new_isOwner == old_isOwner[_owner => true]
+        && new_ownerCount == old_ownerCount + 1
+        && ite (
+            new_ownerCount >= _required,
+            new_walletActive == true,
+            new_walletActive == old_walletActive
+        )
+    }
+
+    function addOwner (address owner) public
+        post addOwnerPost (isOwner, new(isOwner), ownerCount, new(ownerCount), required, walletActive, new(walletActive), owner)
+        tx_reverts addOwnerReverts (owner, isOwner, ownerCount, MAX_OWNER_COUNT)
+        modifies [isOwner, ownerCount, walletActive, log]
+    {
+        uint target_ownerCount = safe_add (ownerCount, 1);
+        if (isOwner[owner] || owner == null || target_ownerCount > MAX_OWNER_COUNT) {
+            revert ("Invalid owner addition");
+        }
+
+        isOwner[owner] = true;
+        ownerCount = ownerCount + 1;
+        if (ownerCount >= required)
+        {
+            walletActive = true;
+        }
+        emit OwnerAddition (owner);
+        return;
+    }
+
+    spec removeOwnerPost (
+        address _owner, mapping (address => bool) old_isOwner, mapping (address => bool) new_isOwner,
+        uint old_ownerCount, uint new_ownerCount, uint old_required, bool old_walletActive, bool new_walletActive)
+    {
+        new_isOwner == old_isOwner[_owner => false]
+        && new_ownerCount == old_ownerCount - 1
+        && ite (
+            new_ownerCount < old_required,
+            new_walletActive == false,
+            new_walletActive == old_walletActive
+        )
+    }
+
+    function removeOwner (address owner) public
+        post removeOwnerPost (owner, isOwner, new(isOwner), ownerCount, new(ownerCount), required, walletActive, new(walletActive))
+        tx_reverts (!isOwner[owner]) || (ownerCount == 0)
+        modifies [isOwner, ownerCount, walletActive, log]
+    {
+        if (!isOwner[owner])
+        {
+            revert ("Invalid owner removal");
+        }
+
+        ownerCount = safe_sub (ownerCount, 1);
+        isOwner[owner] = false;
+
+        if (ownerCount < required)
+        {
+            walletActive = false;
+        }
+
+        emit OwnerRemoval (owner);
+        return;
+    }
+
+    spec replaceOwnerPost (mapping (address => bool) old_isOwner, mapping (address => bool) new_isOwner, address _owner, address newOwner)
+    {
+        new_isOwner == old_isOwner[_owner => false, newOwner => true]
+    }
+
+    function replaceOwner (address owner, address newOwner) public
+        post replaceOwnerPost (isOwner, new(isOwner), owner, newOwner)
+        tx_reverts (!isOwner[owner] || isOwner[newOwner])
+        modifies [isOwner, log]
+    {
+        if (!isOwner[owner] || isOwner[newOwner])
+        {
+            revert("Invalid owner replacement");
+        }
+
+        isOwner[owner] = false;
+        isOwner[newOwner] = true;
+        emit OwnerRemoval (owner);
+        emit OwnerAddition (newOwner);
+        return;
+    }
+
+    spec changeRequirementsPost (uint new_required, uint old_ownerCount, bool old_walletActive, bool new_walletActive)
+    {
+        ite(
+            new_required > old_ownerCount,
+            new_walletActive == false,
+            new_walletActive == old_walletActive
+        )
+    }
+
+    function changeRequirement (uint _required) public
+        post changeRequirementsPost (new(required), ownerCount, walletActive, new(walletActive))
+        modifies [required, ownerCount, log, walletActive]
+    {
+        required = _required;
+        if (required > ownerCount)
+        {
+            walletActive = false;
+        }
+        emit RequirementChange (_required);
+        return;
+    }
+
+    spec addTransactionPost (
+        mapping (uint => Transaction) old_transactions, mapping (uint => Transaction) new_transactions,
+        uint _txId, address _destination, uint _val, mapping (uint => uint) old_confirmationCounts, 
+        mapping (uint => uint) new_confirmationCounts, uint old_transactionCount)
+    {
+        // !(txId in old_transactions) &&
+        new_transactions == old_transactions[_txId => Transaction (_destination, _val, false)]
+        && new_confirmationCounts == old_confirmationCounts[_txId => 0]
+        && _txId == old_transactionCount
+    }
+
+    function addTransaction (address _destination, uint _val) private
+        pre (_destination != null)
+        post addTransactionPost (transactions, new(transactions), transactionId, _destination, _val, confirmationCounts, new(confirmationCounts), transactionCount)
+        modifies [transactions, confirmationCounts, log]
+        returns (uint transactionId)
+    {
+        transactionId = transactionCount;
+        transactions[transactionId] = Transaction (_destination, _val, false);
+        confirmationCounts[transactionId] = 0;
+        emit Submission (transactionId);
+        return transactionId;
+    }
+
+    spec isConfirmedPost (mapping (uint => uint) old_confirmationCounts, uint _transactionId, uint old_required, bool _ret)
+    {
+        (_ret == true <==> old_confirmationCounts[_transactionId] == old_required)
+        && (_ret == false <==> old_confirmationCounts[_transactionId] != old_required)
+    }
+
+    function isConfirmed (uint transactionId) private
+        post isConfirmedPost (confirmationCounts, transactionId, required, ret)
+        modifies []
+        returns (bool ret)
+    {
+        if (confirmationCounts[transactionId] == required) 
+        {
+            ret = true;
+        }
+        else 
+        {
+            ret = false;
+        }
+        return ret;
+    }
+
+    spec isUnderLimitPost (
+        uint time, uint old_lastDay, uint new_lastDay,
+        uint old_spentToday, uint new_spentToday,
+        uint _amount, uint old_dailyLimit, bool _ret)
+    {
+        ite 
+        (
+            time > old_lastDay + 86400,
+            new_lastDay == time && new_spentToday == 0,
+            new_lastDay == old_lastDay && new_spentToday == old_spentToday
+        )
+        && ite
+        (
+            new_spentToday + _amount > old_dailyLimit || new_spentToday + _amount > uint_max,
+            _ret == false,
+            _ret == true
+        )
+    }
+
+    function isUnderLimit (uint _amount) private
+        post isUnderLimitPost (block.timestamp, lastDay, new(lastDay), spentToday, new(spentToday), _amount, dailyLimit, ret)
+        tx_reverts (lastDay + 86400 > uint_max)
+        modifies [lastDay, spentToday]
+        returns (bool ret)
+    {
+        uint t = safe_add (lastDay, 86400);
+        if (block.timestamp > t)
+        {
+            lastDay = block.timestamp;
+            spentToday = 0;
+        }
+        if (_amount > uint_max - spentToday) 
+        {
+            ret = false;
+        }
+        else if (!ret)
+        {
+            if (spentToday + _amount > dailyLimit) 
+            {
+                ret = false;
+            }
+            else 
+            {
+                ret = true;
+            }
+        }
+        return ret;
+    }
+
+    spec executeTransactionReverts (
+        uint _transactionId, uint old_transactionCount,
+        mapping (uint => Transaction) old_transactions, uint old_balance)
+    {
+        _transactionId >= old_transactionCount
+        || old_transactions[_transactionId].executed
+        || old_balance < old_transactions[_transactionId].tval
+    }
+
+    function executeTransaction (uint transactionId) public
+        debit
+        post 
+            ite (
+                confirmationCounts[transactionId] == required,
+                new(tx_isConfirmed) == true,
+                new(tx_isConfirmed) == false
+            )
+            && (ite (
+                new(tx_isConfirmed) || new(tx_isUnderLimit),
+                (new(log) == (Execution, transactionId)::(transactions[transactionId].destination, eTransfer, transactions[transactionId].tval)::log)
+                && (new(transactions) == transactions[transactionId => Transaction(transactions[transactionId].destination, transactions[transactionId].tval, true)]),
+                new(log) == log && new(transactions) == transactions
+            ))
+        
+        tx_reverts (lastDay + 86400 > uint_max) || executeTransactionReverts (transactionId, transactionCount, transactions, balance)
+        modifies [transactions, tx_isConfirmed, tx_isUnderLimit, log, lastDay, spentToday]
+    {
+        if (transactionId >= transactionCount || transactions[transactionId].executed || balance < transactions[transactionId].tval) {
+            revert ("invalid");
+        }
+
+        Transaction trx = transactions[transactionId];
+        tx_isConfirmed = isConfirmed (transactionId);
+        tx_isUnderLimit = isUnderLimit (trx.tval);
+
+        if (tx_isConfirmed || tx_isUnderLimit)
+        {
+            if (!tx_isConfirmed)
+            {
+                spentToday = spentToday + trx.tval;
+            }
+
+            transactions[transactionId].executed = true;
+            payable(transactions[transactionId].destination).transfer(trx.tval);
+            emit Execution (transactionId);
+        }
+        return;
+    }
+
+    function confirmTransaction (uint transactionId) public
+        post 
+            new(confirmationCounts) == confirmationCounts[transactionId => confirmationCounts[transactionId] + 1] &&
+            new(confirmations) == confirmations[transactionId => confirmations[transactionId][sender => true]] &&
+            ite (
+                new(confirmationCounts)[transactionId] == required || new(tx_isUnderLimit),
+                new(log) == (Execution, transactionId)::(transactions[transactionId].destination, eTransfer, transactions[transactionId].tval)::(Confirmation, sender, transactionId)::log
+                    && new(transactions) == transactions[transactionId => Transaction(transactions[transactionId].destination, transactions[transactionId].tval, true)],
+                new(transactions) == transactions
+            )
+        debit
+        tx_reverts (!walletActive || !isOwner[sender] || transactionId >= transactionCount 
+                    || confirmations[transactionId][sender] || confirmationCounts[transactionId] + 1 > uint_max
+                    || balance < transactions[transactionId].tval || transactions[transactionId].executed
+                    || lastDay + 86400 > uint_max)
+        modifies [confirmationCounts, confirmations, transactions, log, lastDay, spentToday, tx_isConfirmed, tx_isUnderLimit]
+    {
+        if (!walletActive || !isOwner[sender] || transactionId >= transactionCount || confirmations[transactionId][sender])
+        {
+            revert ("invalid");
+        }
+        confirmationCounts[transactionId] = safe_add (confirmationCounts[transactionId], 1);
+        confirmations[transactionId][sender] = true;
+        emit Confirmation (sender, transactionId);
+        executeTransaction (transactionId);
+        return;
+    }
+
+    function submitTransaction (address _dest, uint _amount)
+        public
+        tx_reverts (!walletActive || !isOwner[sender] || _dest == null || transactionCount + 1 > uint_max)
+        returns (uint transactionId)
+    {
+        if (!walletActive || !isOwner[sender] || _dest == null) {
+            revert ("invalid");
+        }
+        transactionId = addTransaction (_dest, _amount);
+        transactionCount = safe_add (transactionCount, 1);
+        return transactionId;
+    }
+
+    function revokeConfirmation (uint transactionId) public
+        pre (confirmationCounts[transactionId] > 0)
+        tx_reverts (!isOwner[sender] || !confirmations[transactionId][sender] || transactionId > transactionCount || transactions[transactionId].executed)
+        modifies [confirmations, confirmationCounts, log]
+    {
+        if (!isOwner[sender] || !confirmations[transactionId][sender] || transactionId > transactionCount || transactions[transactionId].executed)
+        {
+            revert ("Invalid");
+        }
+        confirmations[transactionId][sender] = false;
+        // assuming the _confirmationCounts invariant at the start should prove the safety of the following
+        confirmationCounts[transactionId] = safe_sub (confirmationCounts[transactionId], 1);
+        emit Revocation (sender, transactionId);
+        return;
+    }
+
+    function getConfirmationCount (uint transactionId) public
+        modifies[]
+        returns (uint)
+    {
+        return confirmationCounts[transactionId];
+    }
+
+    
+    function changeDailyLimit (uint _dailyLimit) public
+        modifies [dailyLimit, log]
+    {
+        dailyLimit = _dailyLimit;
+        emit DailyLimitChange (_dailyLimit);
+        return;
+    }
+
+    function calcMaxWithdraw () public
+        tx_reverts (lastDay + 86400 > uint_max)
+        modifies []
+        returns (uint)
+    {
+        uint ret;
+        uint endTime = safe_add (lastDay, 86400);
+        if (block.timestamp > endTime)  // rewrite 24 hours as 86400 seconds
+        {
+            ret =  dailyLimit;
+        }
+        else if (dailyLimit < spentToday)
+        {
+            ret = 0;
+        }
+        else
+        {
+            ret = dailyLimit - spentToday;
+        }
+        return ret;
+    }
+}

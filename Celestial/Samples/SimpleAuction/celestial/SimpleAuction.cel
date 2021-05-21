@@ -1,0 +1,152 @@
+pragma solidity^0.6.8;
+
+import { Safe_Arith } from "./Safe_Arith.sol" ; 
+
+contract SimpleAuction_Cel {
+    address beneficiary;
+    uint auctionEndTime;
+    address highestBidder;
+    uint highestBid;
+    mapping (address => uint) pendingReturns;
+    bool ended;
+
+    event HighestBidIncreased (address, uint);
+    event AuctionEnded (address, uint);
+
+    uint totalReturns;
+
+    invariant inv1 
+    {
+        totalReturns == balance
+    }
+
+    invariant inv
+    {
+        !ended ==> (balance == sum_mapping (pendingReturns) + highestBid)
+    }
+
+    // The constructor assumes that balance of the current contract = 0
+    // Theoretically, it may be greater than 0 if Ether is sent to this address
+    //   before it was deployed, but it is not probable.
+    constructor (uint _biddingTime, address _beneficiary) public
+        pre balance == 0
+        tx_reverts block.timestamp + _biddingTime > uint_max
+    {
+        beneficiary = _beneficiary;
+        auctionEndTime = safe_add (block.timestamp, _biddingTime);
+        return;
+    }
+
+    spec bidPost (
+        uint old_highestBid, uint new_highestBid,
+        address old_highestBidder, address new_highestBidder,
+        address _sender, uint _value,
+        mapping (address => uint) old_pendingReturns,
+        mapping (address => uint) new_pendingReturns) 
+    {
+        old_pendingReturns[old_highestBidder] + old_highestBid <= uint_max
+        && ite (
+            old_highestBid != 0,
+            new_pendingReturns == old_pendingReturns[old_highestBidder => old_pendingReturns[old_highestBidder] + old_highestBid],
+            new_pendingReturns == old_pendingReturns
+        )
+        && new_highestBidder == _sender
+        && new_highestBid == _value
+    }
+
+    function bid () public
+        credit
+        post bidPost (highestBid, new(highestBid), highestBidder, new(highestBidder), sender, value, pendingReturns, new(pendingReturns))
+        tx_reverts block.timestamp > auctionEndTime
+                   || value <= highestBid
+                   || pendingReturns[highestBidder] + highestBid > uint_max
+                   || totalReturns + value > uint_max
+        modifies [totalReturns, highestBidder, highestBid, log, pendingReturns]
+    {
+        if (block.timestamp > auctionEndTime)
+            revert ("Auction already ended.");
+
+        if (value <= highestBid)
+            revert ("There already is a higher bid.");
+
+        totalReturns = safe_add (totalReturns, value);
+
+        if (highestBid != 0)
+            // If the fact that ended == false can be proved here,
+            //   the safe_add can be replaced with a normal addition
+            //   since the invariant guarantees no overflow
+            pendingReturns[highestBidder] = safe_add (pendingReturns[highestBidder], highestBid);
+
+        highestBidder = sender;
+        highestBid = value;
+        emit HighestBidIncreased (sender, value);
+        return;
+    }
+
+    spec withdrawPost(
+        address _sender, eventlog old_log, eventlog new_log,
+        mapping (address => uint) old_pendingReturns,
+        mapping (address => uint) new_pendingReturns,
+        uint old_balance, uint new_balance)
+    {
+        ite (
+            old_pendingReturns[_sender] > 0 && old_balance >= old_pendingReturns[_sender],
+            new_log == (_sender, eTransfer, old_pendingReturns[_sender])::old_log
+            && ite 
+            (
+                new_balance < old_balance,
+                new_pendingReturns == old_pendingReturns[_sender => 0],
+                new_pendingReturns == old_pendingReturns
+            ),
+            new_pendingReturns == old_pendingReturns
+        )
+    }
+
+    function withdraw () public
+        debit
+        post withdrawPost (sender, log, new(log), pendingReturns, new(pendingReturns), balance, new(balance))
+        modifies [pendingReturns, totalReturns]
+        returns (bool)
+    {
+        uint amount = pendingReturns[sender];
+        if (amount > 0 && balance >= pendingReturns[sender]) 
+        {
+            sender.transfer(amount);
+
+            // Check if balance did reduce (only happens in the case
+            //   that address(this) == sender, which may be expressed
+            //   as a precondition on this function)
+            if (balance < totalReturns) 
+            {
+                pendingReturns[sender] = 0;
+                totalReturns = totalReturns - amount;
+            }
+        }
+        return true;
+    }
+
+    function auctionEnd () public 
+        post (new(ended) && (new(log) == (beneficiary, eTransfer, highestBid)::(AuctionEnded, highestBidder, highestBid)::log))
+        debit
+        tx_reverts block.timestamp < auctionEndTime || ended || balance < highestBid
+        modifies [totalReturns, ended]
+    {
+        if (block.timestamp < auctionEndTime)
+            revert ("Auction not yet ended.");
+        if (ended)
+            revert ("auctionEnd has already been called.");
+
+        ended = true;
+        emit AuctionEnded (highestBidder, highestBid);
+
+        payable(beneficiary).transfer(highestBid);
+        
+        // Check if balance did reduce (only happens in the case
+        //   that address(this) == beneficiary, which may be 
+        //   expressed as a precondition on this function)
+        if (balance < totalReturns)
+            totalReturns = totalReturns - highestBid;
+
+        return;
+    }
+}

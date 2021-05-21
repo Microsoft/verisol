@@ -1,0 +1,95 @@
+pragma solidity^0.6.8;
+import {Safe_Arith} from"./Safe_Arith.sol";
+
+contract Item {
+    address seller; uint price; address market;
+
+    constructor (address _s, address _m, uint _p)
+        modifies_addresses [this]
+    {
+        seller = _s;
+        price = _p;
+        market = _m;
+        return;
+    }
+
+    function getSeller () 
+        post (s == seller)
+        modifies []
+        modifies_addresses [this]
+        returns (address s) 
+    { return seller; }
+    
+    function getPrice ()
+        post (ret == price) 
+        modifies []
+        modifies_addresses [this]
+        returns (uint ret)
+    { return price; }
+}
+
+contract SimpleMarket {
+    mapping(address => uint) sellerCredits;
+    inst_map<Item> itemsToSell;
+    uint totalCredits;
+    event eNewItem (address, address);
+    event eItemSold (address, address);
+
+    invariant balanceAndSellerCredits {
+        balance == totalCredits &&
+        totalCredits >= sum_mapping (sellerCredits)
+    }
+
+    function sell (uint price) public 
+        post (itemId in new(itemsToSell))
+        returns (address itemId)
+    {
+        itemId = itemsToSell.add(new Item(address(this), sender, price));
+        return itemId;
+    }
+
+    spec buyReverts (address _itemAddress, inst_map<Item> old_itemsToSell, mapping (address => uint) old_sellerCredits, uint _value, uint old_sumCredits)
+    {
+        ! (_itemAddress in old_itemsToSell)
+        || (_value != old_itemsToSell[_itemAddress].price)
+        || (_value + old_sumCredits > uint_max)
+    }
+
+    function buy (address itemId) public credit
+        post (!(itemId in new(itemsToSell))
+                && new(sellerCredits) == sellerCredits[seller => (sellerCredits[seller] + value)]
+                && new(log) == (eItemSold, sender, itemId)::log)
+        tx_reverts buyReverts (itemId, itemsToSell, sellerCredits, value, totalCredits)
+            
+        modifies [sellerCredits, totalCredits, itemsToSell, log]
+        returns (address seller)
+    {
+        Item item = itemsToSell[itemId];
+        if (address(item) == null) { revert ("No such item"); }
+        uint iPrice;
+        iPrice = item.getPrice();
+        if (value != iPrice) 
+        {	revert ("Incorrect price"); }
+        seller = item.getSeller();
+        totalCredits = safe_add (totalCredits, value);
+        sellerCredits[seller] = sellerCredits[seller] + value; 
+        delete (itemsToSell, itemId);
+        emit eItemSold(sender, itemId);
+        return seller;
+    }
+
+    function withdraw (uint amount) public debit
+        pre address(this) != sender
+        post (new(sellerCredits) == sellerCredits[sender => sellerCredits[sender] - amount])
+             && new(totalCredits) == totalCredits - amount
+             && new(balance) == balance - amount
+        tx_reverts sellerCredits [sender] < amount
+    {
+        if (sellerCredits[sender] >= amount) {
+            sender.transfer(amount);
+            sellerCredits[sender] = sellerCredits[sender] - amount;
+            totalCredits = totalCredits - amount;
+        } else { revert ("Insufficient balance"); }
+        return;
+    }
+}

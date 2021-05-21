@@ -1,0 +1,158 @@
+pragma solidity^0.6.8;
+
+import { Safe_Arith } from "./Safe_Arith.sol" ; 
+
+contract WETH9_Cel {
+    string name     = "Wrapped Ether";
+    string symbol   = "WETH";
+    uint decimals   = 18;
+
+    event Approval (address, address, uint);
+    event Transfer (address, address, uint);
+    event Deposit (address, uint);
+    event Withdrawal (address, uint);
+
+    mapping (address => uint) balanceOf;
+    mapping (address => mapping (address => uint)) allowance;
+
+    uint totalBalance;
+
+    invariant sumBalances 
+    {
+        totalBalance == sum_mapping (balanceOf)
+    }
+
+    invariant actualBalance
+    {
+        balance == totalBalance
+    }
+
+    function deposit () public 
+        post new(balanceOf) == balanceOf [sender => balanceOf[sender] + value]
+             && new(log) == (Deposit, sender, value)::log
+        credit
+        tx_reverts (value + totalBalance > uint_max)
+        modifies [balanceOf, totalBalance]
+    {
+        totalBalance = safe_add(totalBalance, value);
+        balanceOf[sender] = balanceOf[sender] + value;
+        emit Deposit (sender, value);
+        return;
+    }
+
+    function withdraw (uint _wad) public 
+        post new(log) == (Withdrawal, sender, _wad)::(sender, eTransfer, _wad)::log
+             && ite (
+                 new(balance) < balance,
+                 new(balanceOf) == balanceOf[sender => balanceOf[sender] - _wad],
+                 new(balanceOf) == balanceOf 
+             )
+        debit
+        tx_reverts balance < _wad || balanceOf[sender] < _wad
+        modifies [balanceOf, totalBalance] 
+    {
+        if (balanceOf[sender] < _wad) {
+            revert ("Insufficient balance");
+        }
+        sender.transfer(_wad);
+        emit Withdrawal (sender, _wad);
+
+        // Check if balance did reduce (only happens in the case
+        //   that address(this) == sender, which may be expressed
+        //   as a precondition on this function)
+        if (balance < totalBalance) 
+        {
+            balanceOf[sender] = balanceOf[sender] - _wad;
+            totalBalance = totalBalance - _wad;
+        }
+        return;
+    }
+
+    function totalSupply () public
+        post (a == balance)
+        modifies []
+        returns (uint a)
+    {
+        a = balance;
+        return a;
+    }
+
+    function approve (address _guy, uint _wad) public
+        post new(allowance) == allowance[sender => allowance[sender][_guy => _wad]]
+        modifies [allowance, log]
+        returns (bool)
+    {
+        allowance[sender][_guy] = _wad;
+        emit Approval (sender, _guy, _wad);
+        return true;
+    }
+
+    spec transferFromReverts(
+        mapping (address => uint) old_balanceOf,
+        mapping (address => mapping (address => uint)) old_allowance,
+        address _sender, address _src,
+        address _dst, uint _wad)
+    {
+        _src == _dst
+        || old_balanceOf[_src] < _wad
+        ||_src != _sender && old_allowance[_src][_sender] != uint_max 
+            && old_allowance[_src][_sender] < _wad
+    }
+
+    spec transferFromPost(
+        mapping (address => uint) old_balanceOf,
+        mapping (address => uint) new_balanceOf,
+        mapping (address => mapping (address => uint)) old_allowance,
+        mapping (address => mapping (address => uint)) new_allowance,
+        address _sender, address _src,
+        address _dst, uint _wad)
+    {
+        ite (
+            _src != _sender && old_allowance[_src][_sender] != uint_max,
+            old_allowance[_src][_sender] >= _wad   // added to let this function typecheck correctly
+            && new_allowance == old_allowance[_src => old_allowance[_src][_sender => (old_allowance[_src][_sender] - _wad)]],
+            new_allowance == old_allowance
+        )
+        && old_balanceOf[_dst] + _wad <= uint_max
+        && old_balanceOf[_src] >= _wad             // added to let this function typecheck correctly
+        && new_balanceOf == old_balanceOf[_src => old_balanceOf[_src] - _wad, _dst => old_balanceOf[_dst] + _wad]
+    }
+
+    function transferFrom (address _src, address _dst, uint _wad) public
+        post transferFromPost (balanceOf, new(balanceOf), allowance, new(allowance), sender, _src, _dst, _wad)
+        tx_reverts transferFromReverts (balanceOf, allowance, sender, _src, _dst, _wad)
+        modifies [balanceOf, allowance, log]
+        returns (bool)
+    {
+        if (_src == _dst) {
+            revert ("Redundant transfer");
+        }
+        if (balanceOf[_src] < _wad) {
+            revert ("Insufficient balance");
+        }
+        if (_src != sender && allowance[_src][sender] != uint_max) {
+            if (allowance[_src][sender] < _wad) {
+                revert ("Insufficient allowance");
+            }
+            allowance[_src][sender] = allowance[_src][sender] - _wad;
+        }
+        balanceOf[_src] = balanceOf[_src] - _wad;
+        balanceOf[_dst] = balanceOf[_dst] + _wad;
+        emit Transfer (_src, _dst, _wad);
+        return true;
+    }
+
+    function _transfer (address _dst, uint _wad) public
+        tx_reverts transferFromReverts (balanceOf, allowance, address(this), sender, _dst, _wad)
+        returns (bool)
+    {
+        return transferFrom(sender, _dst, _wad);
+    }
+
+    receive () credit {
+        totalBalance = safe_add(totalBalance, value);
+        balanceOf[sender] = balanceOf[sender] + value;
+        emit Deposit (sender, value);
+        return;
+    }
+}

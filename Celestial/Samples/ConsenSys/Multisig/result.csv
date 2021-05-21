@@ -1,0 +1,7 @@
+Method,Celestial Gas,Solidity Gas
+Deployment,2551683,2147351
+addOwner,57577,73358
+removeOwner,24085,25936
+replaceOwner,38108,55471
+changeRequirement,29161,28574
+Tx-approval,306667,223075

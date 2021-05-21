@@ -1,0 +1,139 @@
+pragma solidity^0.6.8;
+
+import {Safe_Arith} from "./Safe_Arith.sol" ;
+
+contract BNB_Cel
+{
+    string name; 
+    string symbol; 
+    uint8 decimals; 
+    uint totalSupply; 
+    address owner; 
+
+    mapping (address => uint) balanceOf; 
+    mapping (address => uint) freezeOf; 
+    mapping (address => mapping (address => uint)) allowance; 
+    event Transfer(address , address , uint);
+    event Burn(address , uint );
+    event Freeze(address , uint );
+    event Unfreeze(address , uint );
+
+    invariant totalSupplyInv 
+    {
+        totalSupply == sum_mapping (balanceOf) + sum_mapping (freezeOf)   
+    }
+
+    constructor (uint initialSupply, string tokenName, uint8 decimalUnits, string tokenSymbol)   
+    {
+        balanceOf[sender] = initialSupply;              // Give the creator all initial tokens  
+        totalSupply = initialSupply;                        // Update total supply
+        name = tokenName;                                   // Set the name for display purposes
+        symbol = tokenSymbol;                               // Set the symbol for display purposes
+        decimals = decimalUnits;                            // Amount of decimals for display purposes
+        owner = sender;
+        return;                                            
+    }
+
+    function _transfer (address _to, uint _value) 
+        tx_reverts _to == null || _value <= 0 || balanceOf[sender] < _value || balanceOf[_to] > uint_max - _value
+        post new(log) == (Transfer, sender, _to, _value)::log 
+	     && ite (sender != _to, new(balanceOf) == balanceOf[sender => balanceOf[sender] - _value, _to => balanceOf[_to] + _value], new(balanceOf) == balanceOf[sender => balanceOf[sender]] ) 
+        modifies [balanceOf, log]
+    {
+        if (_to == null) revert ("Preventing transfer to 0x0 address"); // Prevent transfer to 0x0 address. Use burn() instead
+	    if (_value <= 0) revert ("Value is 0");       
+        if (balanceOf[sender] < _value) revert ("Sender doesn't have enough");   // Check if the sender has enough  
+        if (balanceOf[_to] > uint_max - _value) revert ("Overflow!");
+        balanceOf[sender] = safe_sub(balanceOf[sender], _value);  // Subtract from the sender   
+        balanceOf[_to] = safe_add(balanceOf[_to], _value);  // Add the same to the recipient
+        emit Transfer(sender, _to, _value);     // Notify anyone listening that this transfer took place
+        return;
+    }
+
+    function approve(address _spender, uint _value)
+        tx_reverts _value <= 0
+        post new(allowance) == allowance[sender =>  allowance[sender][_spender => _value]]
+        modifies [allowance]
+        returns (bool success) 
+    {
+	if (_value <= 0) revert ("value leq 0"); 
+        allowance[sender][_spender] = _value;
+        return true;
+    }
+       
+    function transferFrom(address _from, address _to, uint _value)
+        tx_reverts  _to == null || _value <= 0 || balanceOf[_from] < _value || balanceOf[_to] > uint_max - _value || _value > allowance[_from][sender]
+        post new(allowance) == allowance[_from =>  allowance[_from][sender => allowance[_from][sender] - _value]] && new(log) == (Transfer, _from, _to, _value)::log 
+             && ite ( _from != _to, new(balanceOf) == balanceOf[_from => balanceOf[_from] - _value, _to => balanceOf[_to] + _value], new(balanceOf) == balanceOf[_from => balanceOf[_from]] )
+        modifies [balanceOf,allowance,log]
+        returns (bool success) 
+    {
+        if (_to == null) revert("preventing transfer to address 0x00");                       // Prevent transfer to 0x0 address. Use burn() instead
+        if (_value <= 0) revert("value leq 0"); 
+        if (balanceOf[_from] < _value) revert ("sender doesn't have enough!");                 // Check if the sender has enough
+        if (balanceOf[_to] > uint_max - _value) revert ("Overflow!");
+        if (_value > allowance[_from][sender]) revert ("allowance check failed");     // Check allowance
+        balanceOf[_from] = safe_sub(balanceOf[_from], _value);                           // Subtract from the sender
+        balanceOf[_to] = safe_add(balanceOf[_to], _value);                             // Add the same to the recipient
+        allowance[_from][sender] = safe_sub(allowance[_from][sender], _value);
+        emit Transfer(_from, _to, _value);
+        return true;
+    }
+    
+    function burn(uint _value) 
+        tx_reverts _value <= 0 || balanceOf[sender] <  _value || totalSupply < _value
+        post new(balanceOf) == balanceOf[sender => balanceOf[sender] - _value] && new(totalSupply) == totalSupply - _value && new(log) == (Burn, sender, _value)::log
+        modifies [balanceOf, totalSupply, log]
+        returns (bool success) 
+    {
+        if (balanceOf[sender] < _value) revert("sender doesn't have enough!");            // Check if the sender has enough
+	    if (_value <= 0) revert("value leq 0"); 
+        balanceOf[sender] = safe_sub(balanceOf[sender], _value);                      // Subtract from the sender
+        totalSupply = safe_sub(totalSupply,_value);                                // Updates totalSupply
+        emit Burn(sender, _value);
+        return true;
+    }
+	
+    function freeze (uint _value) 
+        tx_reverts freezeOf[sender] > uint_max - _value || balanceOf[sender] < _value || _value <= 0
+        post new(balanceOf) == balanceOf[sender => balanceOf[sender] - _value] && new(freezeOf) == freezeOf[sender => freezeOf[sender] + _value]
+             && new(log) == (Freeze, sender, _value)::log
+        modifies [balanceOf,freezeOf,log]
+        returns (bool success)
+    {
+        if (balanceOf[sender] < _value) revert("sender doesn't have enough!");            // Check if the sender has enough
+        if (_value <= 0) revert("value leq 0"); 
+        balanceOf[sender] = safe_sub(balanceOf[sender], _value);                      // Subtract from the sender
+        freezeOf[sender] = safe_add(freezeOf[sender], _value);                                // Updates totalSupply
+        emit Freeze(sender, _value);
+        return true;
+    }
+	
+    function unfreeze(uint _value) 
+        tx_reverts balanceOf[sender] > uint_max - _value || freezeOf[sender] < _value || _value <= 0
+        post new(balanceOf) == balanceOf[sender => balanceOf[sender] + _value] && new(freezeOf) == freezeOf[sender => freezeOf[sender] - _value] && new(log) == (Unfreeze, sender, _value)::log
+        modifies [balanceOf,freezeOf,log]
+        returns (bool success) 
+    {
+        if (freezeOf[sender] < _value) revert("sender doesn't have enough!");            // Check if the sender has enough
+        if (_value <= 0) revert("value leq 0"); 
+        freezeOf[sender] = safe_sub(freezeOf[sender], _value);                      // Subtract from the sender
+        balanceOf[sender] = safe_add(balanceOf[sender], _value);
+        emit Unfreeze(sender, _value);
+        return true;
+    }
+	
+    function withdrawEther(uint amount) debit
+    	post (new(log) == (owner, eTransfer, amount)::log)
+    	tx_reverts sender != owner 
+    {
+	    if(sender != owner) revert("sender is not owner");
+        if (amount > balance) revert ("Insufficient balance");
+	    payable(owner).transfer(amount);
+        return;
+    }
+
+    receive() credit {
+        return;
+    }
+}

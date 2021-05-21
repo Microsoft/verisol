@@ -1,0 +1,273 @@
+pragma solidity^0.6.8;
+
+contract ERC20_Cel
+{
+    mapping (address => uint) balances;
+    mapping (address => mapping (address => uint)) allowances;
+    uint totalSupply;
+
+    invariant totalSupplyInv 
+    {
+        totalSupply == sum_mapping (balances)
+    }
+
+    spec nullCheckPre (address a1, address a2)
+    {
+        a1 != null && a2 != null
+    }
+
+    function _msgSender () private view
+        post ret == sender
+        modifies []
+        returns (address ret)
+    {
+        return sender;
+    }
+
+    spec transferPost (
+        mapping (address => uint) old_balances, mapping (address => uint) new_balances,
+        address _from, address _to, uint _amount)
+    {
+        (old_balances[_from] >= _amount)
+        && (old_balances[_to] + _amount <= uint_max) // these lines ensure this function is typechecked correctly
+        && ite
+        (
+            _from == _to,
+            new_balances == old_balances,
+            new_balances == old_balances[
+                    _from => old_balances[_from] - _amount,
+                    _to => old_balances[_to] + _amount
+                ]
+        )
+    }
+
+    spec _approvePost (
+        mapping (address => mapping (address => uint)) old_allowances,
+        mapping (address => mapping (address => uint)) new_allowances,
+        address _owner, address _spender, uint _amount)
+    {
+        new_allowances == old_allowances[_owner => old_allowances[_owner][_spender => _amount]]    
+    }
+
+    spec transferFromPost (
+        mapping (address => mapping (address => uint)) old_allowances,
+        mapping (address => mapping (address => uint)) new_allowances,
+        mapping (address => uint) old_balances,
+        mapping (address => uint) new_balances,
+        address _from, address _to,
+        address _sender, uint _amount)
+    {
+        transferPost (old_balances, new_balances, _from, _to, _amount)
+        && old_allowances[_from][_sender] >= _amount
+        && _approvePost (old_allowances, new_allowances, _from, _sender, old_allowances[_from][_sender] - _amount)
+    }
+
+    function getTotalSupply () public
+        modifies []
+        returns (uint)
+    {
+        return totalSupply;
+    }
+
+    function balanceOf (address account) public
+        modifies []
+        returns (uint) 
+    {
+        return balances[account];
+    }
+
+    function _transfer (address _from, address _to, uint _amount) private
+        pre nullCheckPre (_from, _to)
+            && balances[_from] >= _amount && balances[_to] + _amount <= uint_max
+        post transferPost (balances, new(balances), _from, _to, _amount)
+        modifies [balances]
+    {
+        if (_from != _to)
+        {
+            balances[_from] = balances[_from] - (_amount); 
+            balances[_to] = balances[_to] + (_amount);
+        }
+        return;
+    }
+
+    spec mintReverts (
+        address _account, uint old_totalSupply,
+        mapping (address => uint) old_balances, uint _amount)
+    {
+        _account == null || (old_totalSupply > uint_max - _amount || old_balances[_account] > uint_max - _amount)
+    }
+
+    spec burnReverts (
+        address _account, uint old_totalSupply,
+        mapping (address => uint) old_balances, uint _amount)
+    {
+        _account == null || (old_balances[_account] < _amount || old_totalSupply < _amount)
+    }                          
+
+    function mint (address _account, uint _amount) public
+        post new(totalSupply) == totalSupply + _amount
+             && new(balances) == balances[_account => balances[_account] + _amount]
+        tx_reverts mintReverts (_account, totalSupply, balances, _amount)
+        modifies [totalSupply, balances]
+    {
+        if (_account == null)
+        {
+            revert ("ERC20: mint to the zero address");
+        }
+
+        if (totalSupply <= uint_max - _amount && balances[_account] <= uint_max - _amount)
+        {
+            totalSupply = totalSupply + _amount;
+            balances[_account] = balances[_account] + _amount;
+        }
+        else
+        {
+            revert ("Overflow");
+        }
+        return;
+    }
+
+    function burn (address _account, uint _amount) public 
+        post new(totalSupply) == totalSupply - _amount
+             && new(balances) == balances[_account => balances[_account] - _amount]
+        tx_reverts burnReverts (_account, totalSupply, balances, _amount)
+        modifies [totalSupply, balances]
+    {
+        if (_account == null)
+        {
+            revert ("ERC20: burn from the zero address");
+        }
+
+        if (balances[_account] >= _amount && totalSupply >= _amount)
+        {
+            totalSupply = totalSupply - _amount;
+            balances[_account] = balances[_account] - _amount;
+        }
+        else
+        {
+            revert ("Underflow");
+        }
+        return;
+    }
+
+    function _approve (address _owner, address _spender, uint _amount) private
+        pre nullCheckPre (_owner, _spender) && _amount >=0 && _amount <= uint_max
+        post _approvePost (allowances, new(allowances), _owner, _spender, _amount)
+        modifies [allowances]
+    {
+        allowances[_owner][_spender] = _amount;
+        return;
+    }
+
+    function burnFrom (address _account, uint _amount) public
+        tx_reverts burnReverts (_account, totalSupply, balances, _amount)
+        modifies [totalSupply, balances, allowances]
+    {
+        burn (_account, _amount);
+        if (_account != null && sender != null && allowances[_account][sender] >= _amount)
+        {
+            _approve(_account, sender, allowances[_account][sender] - _amount);
+        }
+        return;
+    }
+
+    function transfer_ (address _to, uint _amount) public
+        post new(balances)[sender] <= balances[sender] && balances[_to] >= balances[_to]
+        tx_reverts _to == null
+        modifies [balances]
+        returns (bool)
+    {
+        if (_to == null)
+        {
+            revert ("Sender/Recipient must be non-null");
+        }
+
+        if (balances[sender] >= _amount && balances[_to] <= uint_max - _amount)
+        {
+            _transfer (sender, _to, _amount);
+        }
+
+        return true;
+    }
+
+    function allowance (address _owner, address _spender) public 
+        modifies []
+        returns (uint)
+    {
+        return allowances[_owner][_spender];
+    }
+
+    function approve (address _spender, uint _amount) public
+        modifies [allowances]
+        returns (bool) 
+    {
+        if (_spender != null)
+        {
+            _approve(sender, _spender, _amount);
+        }
+        return true;
+    }
+
+    spec transferFromReverts (
+        address _to, address _from, uint _amount, mapping (address => uint) old_balances,
+        mapping (address => mapping (address => uint)) old_allowances, address _sender)
+    {
+        _from == null || _to == null || (old_balances[_from] < _amount
+        || old_balances[_to] > uint_max - _amount) || (old_allowances[_from][_sender] < _amount)
+    }
+
+    function transferFrom(address _from, address _to, uint _amount) public
+        post transferFromPost (allowances, new(allowances), balances, new(balances), _from, _to, sender, _amount)
+        tx_reverts transferFromReverts (_to, _from, _amount, balances, allowances, sender)
+        modifies [balances, allowances]
+        returns (bool)
+    {
+        if (_from == null || _to == null)
+        {
+            revert ("<ErrorLog> from/to addresses are null");
+        }
+
+        if (balances[_from] >= _amount && balances[_to] <= uint_max - _amount)
+        {
+            _transfer (_from, _to, _amount);
+        }
+        else
+        {
+            revert ("<ErrorLog> Underflow/Overflow");
+        }
+
+        if (allowances[_from][sender] >= _amount)
+        {
+            _approve (_from, sender, allowances[_from][sender] - _amount);
+        }
+        else
+        {
+            revert ("<ErrorLog> Allowance insufficient");
+        }
+
+        return true;
+    }
+
+    function increaseAllowance (address _spender, uint _addedValue) public
+        modifies [allowances]
+        returns (bool)
+    {
+        if (_spender != null && allowances[sender][_spender] <= uint_max - _addedValue)
+        {
+            _approve (sender, _spender, allowances[sender][_spender] + _addedValue);
+        }
+        return true;
+    }
+
+    function decreaseAllowance (address _spender, uint _subtractedValue) public
+        modifies [allowances]
+        returns (bool)
+    {
+        if (_spender != null && allowances[sender][_spender] >= _subtractedValue)
+        {
+            _approve (sender, _spender, allowances[sender][_spender] - _subtractedValue);
+        }
+        return true;
+    }
+
+}
